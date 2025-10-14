@@ -12,6 +12,9 @@
 (define-constant ERR_INVALID_AMOUNT (err u1007))
 (define-constant ERR_ALREADY_EXISTS (err u1008))
 
+(define-constant ERR_RATING_INVALID (err u1009))
+(define-constant ERR_ALREADY_RATED (err u1010))
+
 (define-data-var total-pools uint u0)
 (define-data-var platform-fee-balance uint u0)
 
@@ -187,3 +190,77 @@
 
 (define-read-only (get-total-pools)
   (var-get total-pools))
+
+
+(define-map driver-ratings principal {
+  total-rating-points: uint,
+  rating-count: uint,
+  average-rating: uint,
+  last-rated-block: uint
+})
+
+(define-map pool-rating-records {pool-id: uint, rater: principal, driver: principal} {
+  rating: uint,
+  rated-at: uint
+})
+
+(define-public (submit-driver-rating (pool-id uint) (driver principal) (rating uint))
+  (let (
+    (pool (unwrap! (map-get? settlement-pools pool-id) ERR_POOL_NOT_FOUND))
+    (driver-pool-data (unwrap! (map-get? pool-drivers {pool-id: pool-id, driver: driver}) ERR_DRIVER_NOT_FOUND))
+    (existing-rating (map-get? pool-rating-records {pool-id: pool-id, rater: tx-sender, driver: driver}))
+    (current-ratings (default-to {total-rating-points: u0, rating-count: u0, average-rating: u0, last-rated-block: u0} 
+                                  (map-get? driver-ratings driver)))
+  )
+    (asserts! (and (>= rating u1) (<= rating u5)) ERR_RATING_INVALID)
+    (asserts! (is-none existing-rating) ERR_ALREADY_RATED)
+    (asserts! (get claimed driver-pool-data) ERR_NOT_AUTHORIZED)
+    (let (
+      (new-rating-count (+ (get rating-count current-ratings) u1))
+      (new-total-points (+ (get total-rating-points current-ratings) rating))
+      (new-average (/ new-total-points new-rating-count))
+    )
+      (map-set driver-ratings driver {
+        total-rating-points: new-total-points,
+        rating-count: new-rating-count,
+        average-rating: new-average,
+        last-rated-block: stacks-block-height
+      })
+      (map-set pool-rating-records {pool-id: pool-id, rater: tx-sender, driver: driver} {
+        rating: rating,
+        rated-at: stacks-block-height
+      })
+      (ok new-average))))
+
+(define-read-only (get-driver-rating (driver principal))
+  (map-get? driver-ratings driver))
+
+(define-read-only (calculate-driver-performance-score (driver principal))
+  (let (
+    (rating-data (map-get? driver-ratings driver))
+    (driver-data (map-get? drivers driver))
+  )
+    (match rating-data
+      ratings (match driver-data
+                driver-info (ok {
+                  average-rating: (get average-rating ratings),
+                  total-ratings: (get rating-count ratings),
+                  rides-completed: (get rides-completed driver-info),
+                  performance-score: (/ (+ (* (get average-rating ratings) u20) 
+                                         (/ (get rides-completed driver-info) u10)) u2)
+                })
+                ERR_DRIVER_NOT_FOUND)
+      ERR_DRIVER_NOT_FOUND)))
+
+(define-read-only (check-driver-meets-threshold (driver principal) (min-rating uint) (min-rides uint))
+  (let (
+    (rating-data (map-get? driver-ratings driver))
+    (driver-data (map-get? drivers driver))
+  )
+    (match rating-data
+      ratings (match driver-data
+                driver-info (ok (and (>= (get average-rating ratings) min-rating)
+                                     (>= (get rides-completed driver-info) min-rides)
+                                     (get is-active driver-info)))
+                (ok false))
+      (ok false))))
