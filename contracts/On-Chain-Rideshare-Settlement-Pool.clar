@@ -264,3 +264,70 @@
                                      (get is-active driver-info)))
                 (ok false))
       (ok false))))
+
+
+(define-constant TIER_BRONZE_RIDES u50)
+(define-constant TIER_SILVER_RIDES u150)
+(define-constant TIER_GOLD_RIDES u300)
+(define-constant TIER_PLATINUM_RIDES u500)
+
+(define-constant TIER_BRONZE_RATING u3)
+(define-constant TIER_SILVER_RATING u35)
+(define-constant TIER_GOLD_RATING u40)
+(define-constant TIER_PLATINUM_RATING u45)
+
+(define-constant TIER_BRONZE_EARNINGS u10000000)
+(define-constant TIER_SILVER_EARNINGS u50000000)
+(define-constant TIER_GOLD_EARNINGS u100000000)
+(define-constant TIER_PLATINUM_EARNINGS u250000000)
+
+(define-constant MULTIPLIER_BRONZE u10500)
+(define-constant MULTIPLIER_SILVER u11000)
+(define-constant MULTIPLIER_GOLD u11500)
+(define-constant MULTIPLIER_PLATINUM u12500)
+
+(define-constant ERR_TIER_CALCULATION_FAILED (err u1011))
+
+(define-read-only (get-driver-tier (driver principal))
+  (let (
+    (driver-data (map-get? drivers driver))
+    (rating-data (map-get? driver-ratings driver))
+  )
+    (match driver-data
+      driver-info
+        (let (
+          (rides (get rides-completed driver-info))
+          (earnings (get total-earned driver-info))
+          (avg-rating (match rating-data
+                        ratings (get average-rating ratings)
+                        u0))
+        )
+          (if (and (>= rides TIER_PLATINUM_RIDES) (>= avg-rating TIER_PLATINUM_RATING) (>= earnings TIER_PLATINUM_EARNINGS))
+            (ok u4)
+            (if (and (>= rides TIER_GOLD_RIDES) (>= avg-rating TIER_GOLD_RATING) (>= earnings TIER_GOLD_EARNINGS))
+              (ok u3)
+              (if (and (>= rides TIER_SILVER_RIDES) (>= avg-rating TIER_SILVER_RATING) (>= earnings TIER_SILVER_EARNINGS))
+                (ok u2)
+                (if (and (>= rides TIER_BRONZE_RIDES) (>= avg-rating TIER_BRONZE_RATING) (>= earnings TIER_BRONZE_EARNINGS))
+                  (ok u1)
+                  (ok u0))))))
+      ERR_DRIVER_NOT_FOUND)))
+
+(define-read-only (get-tier-multiplier (tier-level uint))
+  (if (is-eq tier-level u4)
+    (ok MULTIPLIER_PLATINUM)
+    (if (is-eq tier-level u3)
+      (ok MULTIPLIER_GOLD)
+      (if (is-eq tier-level u2)
+        (ok MULTIPLIER_SILVER)
+        (if (is-eq tier-level u1)
+          (ok MULTIPLIER_BRONZE)
+          (ok u10000))))))
+
+(define-read-only (calculate-driver-share-with-tier (pool-id uint) (driver principal))
+  (let (
+    (base-share (unwrap! (calculate-driver-share pool-id driver) ERR_TIER_CALCULATION_FAILED))
+    (tier-level (unwrap! (get-driver-tier driver) ERR_TIER_CALCULATION_FAILED))
+    (multiplier (unwrap! (get-tier-multiplier tier-level) ERR_TIER_CALCULATION_FAILED))
+  )
+    (ok (/ (* base-share multiplier) u10000))))
